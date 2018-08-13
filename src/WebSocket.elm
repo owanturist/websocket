@@ -153,7 +153,7 @@ init =
 
 (&>) : Task x a -> Task x b -> Task x b
 (&>) t1 t2 =
-    Task.andThen (\_ -> t2) t1
+    Task.andThen (always t2) t1
 
 
 onEffects :
@@ -255,7 +255,7 @@ onSelfMsg router selfMsg state =
 
                 Just _ ->
                     attemptOpen router 0 name
-                        |> Task.andThen (\pid -> Task.succeed (updateSocket name (Opening 0 pid) state))
+                        |> Task.map (\pid -> updateSocket name (Opening 0 pid) state)
 
         GoodOpen name socket ->
             case Dict.get name state.queues of
@@ -275,7 +275,7 @@ onSelfMsg router selfMsg state =
 
                 Just (Opening n _) ->
                     attemptOpen router (n + 1) name
-                        |> Task.andThen (\pid -> Task.succeed (updateSocket name (Opening (n + 1) pid) state))
+                        |> Task.map (\pid -> updateSocket name (Opening (n + 1) pid) state)
 
                 Just (Connected _) ->
                     Task.succeed state
@@ -317,7 +317,7 @@ open name router =
     WS.open name
         {- @TODO -} []
         { onMessage = \_ msg -> Platform.sendToSelf router (Receive name msg)
-        , onClose = \details -> Platform.sendToSelf router (Die name)
+        , onClose = \_ -> Platform.sendToSelf router (Die name)
         }
 
 
