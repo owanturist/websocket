@@ -1,12 +1,15 @@
 var _elm_lang$websocket$Native_WebSocket = function() {
 
-function open(url, settings)
+function open(url, protocols, settings)
 {
 	return _elm_lang$core$Native_Scheduler.nativeBinding(function(callback)
 	{
 		try
 		{
-			var socket = new WebSocket(url);
+			var socket = new WebSocket(
+				url,
+				_elm_lang$core$Native_List.toArray(protocols)
+			);
 			socket.elm_web_socket = true;
 		}
 		catch(err)
@@ -90,7 +93,7 @@ function bytesQueued(socket)
 }
 
 return {
-	open: F2(open),
+	open: F3(open),
 	send: F2(send),
 	close: F3(close),
 	bytesQueued: bytesQueued

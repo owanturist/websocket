@@ -1,7 +1,7 @@
 {
     "version": "1.0.2",
     "summary": "Persistent network connections, making client/server communication faster.",
-    "repository": "http://github.com/elm-lang/websocket.git",
+    "repository": "http://github.com/owanturist/websocket.git",
     "license": "BSD3",
     "source-directories": [
         "src"
