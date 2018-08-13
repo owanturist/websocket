@@ -28,10 +28,10 @@ many unique connections to the same endpoint, you need a different library.
 
 -}
 
-import Dict
+import Dict exposing (Dict)
 import Process
 import Task exposing (Task)
-import WebSocket.LowLevel as WS
+import WebSocket.LowLevel as WS exposing (WebSocket)
 
 
 -- COMMANDS
@@ -126,20 +126,20 @@ type alias State msg =
 
 
 type alias SocketsDict =
-    Dict.Dict String Connection
+    Dict String Connection
 
 
 type alias QueuesDict =
-    Dict.Dict String (List String)
+    Dict String (List String)
 
 
 type alias SubsDict msg =
-    Dict.Dict String (List (String -> msg))
+    Dict String (List (String -> msg))
 
 
 type Connection
     = Opening Int Process.Id
-    | Connected WS.WebSocket
+    | Connected WebSocket
 
 
 init : Task Never (State msg)
@@ -175,7 +175,7 @@ onEffects router cmds subs state =
                 leftStep name _ getNewSockets =
                     Task.map2
                         (\pid newSockets -> Dict.insert name (Opening 0 pid) newSockets)
-                        (attemptOpen router 0 name {- @TODO -} [])
+                        (attemptOpen router 0 name)
                         getNewSockets
 
                 bothStep name _ connection getNewSockets =
@@ -188,8 +188,7 @@ onEffects router cmds subs state =
                 |> Dict.merge leftStep bothStep rightStep newEntries state.sockets
                 |> Task.map (State newQueues newSubs)
     in
-    sendMessagesHelp cmds state.sockets state.queues
-        |> Task.andThen cleanup
+    Task.andThen cleanup (sendMessagesHelp cmds state.sockets state.queues)
 
 
 sendMessagesHelp : List (MyCmd msg) -> SocketsDict -> QueuesDict -> Task x QueuesDict
@@ -209,26 +208,21 @@ sendMessagesHelp cmds socketsDict queuesDict =
 
 
 buildSubDict : List (MySub msg) -> SubsDict msg -> SubsDict msg
-buildSubDict subs dict =
+buildSubDict subs acc =
     case subs of
         [] ->
-            dict
+            acc
 
         (Listen name tagger) :: rest ->
-            buildSubDict rest (Dict.update name (add tagger) dict)
+            buildSubDict rest (Dict.update name (add tagger) acc)
 
         (KeepAlive name) :: rest ->
-            buildSubDict rest (Dict.update name (Just << Maybe.withDefault []) dict)
+            buildSubDict rest (Dict.update name (Just << Maybe.withDefault []) acc)
 
 
 add : a -> Maybe (List a) -> Maybe (List a)
 add value maybeList =
-    case maybeList of
-        Nothing ->
-            Just [ value ]
-
-        Just list ->
-            Just (value :: list)
+    Just (value :: Maybe.withDefault [] maybeList)
 
 
 
@@ -237,9 +231,9 @@ add value maybeList =
 
 type Msg
     = Receive String String
-    | Die String (List String)
-    | GoodOpen String WS.WebSocket
-    | BadOpen String (List String)
+    | Die String
+    | GoodOpen String WebSocket
+    | BadOpen String
 
 
 onSelfMsg : Platform.Router msg Msg -> Msg -> State msg -> Task Never (State msg)
@@ -254,13 +248,13 @@ onSelfMsg router selfMsg state =
             in
             Task.sequence sends &> Task.succeed state
 
-        Die name protocols ->
+        Die name ->
             case Dict.get name state.sockets of
                 Nothing ->
                     Task.succeed state
 
                 Just _ ->
-                    attemptOpen router 0 name protocols
+                    attemptOpen router 0 name
                         |> Task.andThen (\pid -> Task.succeed (updateSocket name (Opening 0 pid) state))
 
         GoodOpen name socket ->
@@ -274,13 +268,13 @@ onSelfMsg router selfMsg state =
                         (Task.succeed (removeQueue name (updateSocket name (Connected socket) state)))
                         messages
 
-        BadOpen name protocols ->
+        BadOpen name ->
             case Dict.get name state.sockets of
                 Nothing ->
                     Task.succeed state
 
                 Just (Opening n _) ->
-                    attemptOpen router (n + 1) name protocols
+                    attemptOpen router (n + 1) name
                         |> Task.andThen (\pid -> Task.succeed (updateSocket name (Opening (n + 1) pid) state))
 
                 Just (Connected _) ->
@@ -301,29 +295,29 @@ removeQueue name state =
 -- OPENING WEBSOCKETS WITH EXPONENTIAL BACKOFF
 
 
-attemptOpen : Platform.Router msg Msg -> Int -> String -> List String -> Task x Process.Id
-attemptOpen router backoff name protocols =
+attemptOpen : Platform.Router msg Msg -> Int -> String -> Task x Process.Id
+attemptOpen router backoff name =
     let
         goodOpen ws =
             Platform.sendToSelf router (GoodOpen name ws)
 
         badOpen _ =
-            Platform.sendToSelf router (BadOpen name protocols)
+            Platform.sendToSelf router (BadOpen name)
 
         actuallyAttemptOpen =
-            open name protocols router
+            open name router
                 |> Task.andThen goodOpen
                 |> Task.onError badOpen
     in
     Process.spawn (after backoff &> actuallyAttemptOpen)
 
 
-open : String -> List String -> Platform.Router msg Msg -> Task WS.BadOpen WS.WebSocket
-open name protocols router =
+open : String -> Platform.Router msg Msg -> Task WS.BadOpen WebSocket
+open name router =
     WS.open name
-        protocols
+        {- @TODO -} []
         { onMessage = \_ msg -> Platform.sendToSelf router (Receive name msg)
-        , onClose = \details -> Platform.sendToSelf router (Die name protocols)
+        , onClose = \details -> Platform.sendToSelf router (Die name)
         }
 
 
