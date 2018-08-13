@@ -164,25 +164,31 @@ onEffects :
     -> Task Never (State msg)
 onEffects router cmds subs state =
     let
+        newSubs : SubsDict msg
         newSubs =
             buildSubDict subs Dict.empty
 
+        cleanup : QueuesDict -> Task x (State msg)
         cleanup newQueues =
             let
+                newEntries : QueuesDict
                 newEntries =
                     Dict.union newQueues (Dict.map (\_ _ -> []) newSubs)
 
-                leftStep name _ getNewSockets =
+                leftStep : String -> List String -> Task x SocketsDict -> Task x SocketsDict
+                leftStep name _ nextSockets =
                     Task.map2
                         (\pid newSockets -> Dict.insert name (Opening 0 pid) newSockets)
-                        (attemptOpen router 0 name)
-                        getNewSockets
+                        (attemptOpen router 0 name {- @TODO -} [])
+                        nextSockets
 
-                bothStep name _ connection getNewSockets =
-                    Task.map (Dict.insert name connection) getNewSockets
+                bothStep : String -> List String -> Connection -> Task x SocketsDict -> Task x SocketsDict
+                bothStep name _ connection nextSockets =
+                    Task.map (Dict.insert name connection) nextSockets
 
-                rightStep name connection getNewSockets =
-                    closeConnection connection &> getNewSockets
+                rightStep : String -> Connection -> Task x SocketsDict -> Task x SocketsDict
+                rightStep name connection nextSockets =
+                    closeConnection connection &> nextSockets
             in
             Task.succeed Dict.empty
                 |> Dict.merge leftStep bothStep rightStep newEntries state.sockets
@@ -241,6 +247,7 @@ onSelfMsg router selfMsg state =
     case selfMsg of
         Receive name str ->
             let
+                sends : List (Task x ())
                 sends =
                     Dict.get name state.subs
                         |> Maybe.withDefault []
@@ -254,7 +261,7 @@ onSelfMsg router selfMsg state =
                     Task.succeed state
 
                 Just _ ->
-                    attemptOpen router 0 name
+                    attemptOpen router 0 name {- @TODO -} []
                         |> Task.map (\pid -> updateSocket name (Opening 0 pid) state)
 
         GoodOpen name socket ->
@@ -274,7 +281,7 @@ onSelfMsg router selfMsg state =
                     Task.succeed state
 
                 Just (Opening n _) ->
-                    attemptOpen router (n + 1) name
+                    attemptOpen router (n + 1) name {- @TODO -} []
                         |> Task.map (\pid -> updateSocket name (Opening (n + 1) pid) state)
 
                 Just (Connected _) ->
@@ -295,27 +302,31 @@ removeQueue name state =
 -- OPENING WEBSOCKETS WITH EXPONENTIAL BACKOFF
 
 
-attemptOpen : Platform.Router msg Msg -> Int -> String -> Task x Process.Id
-attemptOpen router backoff name =
+attemptOpen : Platform.Router msg Msg -> Int -> String -> List String -> Task x Process.Id
+attemptOpen router backoff name protocols =
     let
+        goodOpen : WebSocket -> Task WS.BadOpen ()
         goodOpen ws =
             Platform.sendToSelf router (GoodOpen name ws)
 
+        badOpen : WS.BadOpen -> Task x ()
         badOpen _ =
             Platform.sendToSelf router (BadOpen name)
 
+        actuallyAttemptOpen : Task x ()
         actuallyAttemptOpen =
-            open name router
+            open name protocols router
                 |> Task.andThen goodOpen
                 |> Task.onError badOpen
     in
     Process.spawn (after backoff &> actuallyAttemptOpen)
 
 
-open : String -> Platform.Router msg Msg -> Task WS.BadOpen WebSocket
-open name router =
-    WS.open name
-        {- @TODO -} []
+open : String -> List String -> Platform.Router msg Msg -> Task WS.BadOpen WebSocket
+open name protocols router =
+    WS.open
+        name
+        protocols
         { onMessage = \_ msg -> Platform.sendToSelf router (Receive name msg)
         , onClose = \_ -> Platform.sendToSelf router (Die name)
         }
