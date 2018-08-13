@@ -134,7 +134,7 @@ type alias QueuesDict =
 
 
 type alias SubsDict msg =
-    Dict String (List (String -> msg))
+    Dict String ( List String, List (String -> msg) )
 
 
 type Connection
@@ -145,6 +145,11 @@ type Connection
 init : Task Never (State msg)
 init =
     Task.succeed (State Dict.empty Dict.empty Dict.empty)
+
+
+getProtocols : String -> SubsDict msg -> List String
+getProtocols name subsDict =
+    Maybe.withDefault [] <| Maybe.map Tuple.first <| Dict.get name subsDict
 
 
 
@@ -179,7 +184,7 @@ onEffects router cmds subs state =
                 leftStep name _ nextSockets =
                     Task.map2
                         (\pid newSockets -> Dict.insert name (Opening 0 pid) newSockets)
-                        (attemptOpen router 0 name {- @TODO -} [])
+                        (attemptOpen router 0 name (getProtocols name newSubs))
                         nextSockets
 
                 bothStep : String -> List String -> Connection -> Task x SocketsDict -> Task x SocketsDict
@@ -219,11 +224,22 @@ buildSubDict subs acc =
         [] ->
             acc
 
-        (Listen name _ tagger) :: rest ->
-            buildSubDict rest (Dict.update name (add tagger) acc)
+        (Listen name protocols tagger) :: rest ->
+            Dict.update name
+                (\item ->
+                    case item of
+                        Nothing ->
+                            Just ( protocols, [ tagger ] )
 
-        (KeepAlive name _) :: rest ->
-            buildSubDict rest (Dict.update name (Just << Maybe.withDefault []) acc)
+                        Just ( _, taggers ) ->
+                            Just ( protocols, tagger :: taggers )
+                )
+                acc
+                |> buildSubDict rest
+
+        (KeepAlive name protocols) :: rest ->
+            Dict.update name (Just << Maybe.withDefault ( protocols, [] )) acc
+                |> buildSubDict rest
 
 
 add : a -> Maybe (List a) -> Maybe (List a)
@@ -250,6 +266,7 @@ onSelfMsg router selfMsg state =
                 sends : List (Task x ())
                 sends =
                     Dict.get name state.subs
+                        |> Maybe.map Tuple.second
                         |> Maybe.withDefault []
                         |> List.map (\tagger -> Platform.sendToApp router (tagger str))
             in
@@ -261,7 +278,7 @@ onSelfMsg router selfMsg state =
                     Task.succeed state
 
                 Just _ ->
-                    attemptOpen router 0 name {- @TODO -} []
+                    attemptOpen router 0 name (getProtocols name state.subs)
                         |> Task.map (\pid -> updateSocket name (Opening 0 pid) state)
 
         GoodOpen name socket ->
@@ -281,7 +298,7 @@ onSelfMsg router selfMsg state =
                     Task.succeed state
 
                 Just (Opening n _) ->
-                    attemptOpen router (n + 1) name {- @TODO -} []
+                    attemptOpen router (n + 1) name (getProtocols name state.subs)
                         |> Task.map (\pid -> updateSocket name (Opening (n + 1) pid) state)
 
                 Just (Connected _) ->
