@@ -38,7 +38,7 @@ import WebSocket.LowLevel as WS exposing (WebSocket)
 
 
 type MyCmd msg
-    = Send String String
+    = Send String (List String) String
 
 
 {-| Send a message to a particular address. You might say something like this:
@@ -50,14 +50,14 @@ type MyCmd msg
 send one message and then closed. Not good!
 
 -}
-send : String -> String -> Cmd msg
-send url message =
-    command (Send url message)
+send : String -> List String -> String -> Cmd msg
+send url protocols message =
+    command (Send url protocols message)
 
 
 cmdMap : (a -> b) -> MyCmd a -> MyCmd b
-cmdMap _ (Send url msg) =
-    Send url msg
+cmdMap _ (Send url protocols msg) =
+    Send url protocols msg
 
 
 
@@ -65,8 +65,8 @@ cmdMap _ (Send url msg) =
 
 
 type MySub msg
-    = Listen String (String -> msg)
-    | KeepAlive String
+    = Listen String (List String) (String -> msg)
+    | KeepAlive String (List String)
 
 
 {-| Subscribe to any incoming messages on a websocket. You might say something
@@ -82,9 +82,9 @@ with an exponential backoff strategy. Any messages you try to `send` while the
 connection is down are queued and will be sent as soon as possible.
 
 -}
-listen : String -> (String -> msg) -> Sub msg
-listen url tagger =
-    subscription (Listen url tagger)
+listen : String -> List String -> (String -> msg) -> Sub msg
+listen url protocols tagger =
+    subscription (Listen url protocols tagger)
 
 
 {-| Keep a connection alive, but do not report any messages. This is useful
@@ -99,19 +99,19 @@ with an exponential backoff strategy. Any messages you try to `send` while the
 connection is down are queued and will be sent as soon as possible.
 
 -}
-keepAlive : String -> Sub msg
-keepAlive url =
-    subscription (KeepAlive url)
+keepAlive : String -> List String -> Sub msg
+keepAlive url protocols =
+    subscription (KeepAlive url protocols)
 
 
 subMap : (a -> b) -> MySub a -> MySub b
 subMap func sub =
     case sub of
-        Listen url tagger ->
-            Listen url (tagger >> func)
+        Listen url protocols tagger ->
+            Listen url protocols (tagger >> func)
 
-        KeepAlive url ->
-            KeepAlive url
+        KeepAlive url protocols ->
+            KeepAlive url protocols
 
 
 
@@ -197,7 +197,7 @@ sendMessagesHelp cmds socketsDict queuesDict =
         [] ->
             Task.succeed queuesDict
 
-        (Send name msg) :: rest ->
+        (Send name _ msg) :: rest ->
             case Dict.get name socketsDict of
                 Just (Connected socket) ->
                     WS.send socket msg
@@ -213,10 +213,10 @@ buildSubDict subs acc =
         [] ->
             acc
 
-        (Listen name tagger) :: rest ->
+        (Listen name _ tagger) :: rest ->
             buildSubDict rest (Dict.update name (add tagger) acc)
 
-        (KeepAlive name) :: rest ->
+        (KeepAlive name _) :: rest ->
             buildSubDict rest (Dict.update name (Just << Maybe.withDefault []) acc)
 
 
